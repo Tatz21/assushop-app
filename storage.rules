@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Invoices and Statement PDFs: Salesman can read his own; Admin full access
+    match /invoices/{year}/{month}/{invoicePdf} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    // Store Signboard Photos and Cheque Leaf Photos
+    match /receipts/{outletId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+  }
+}

@@ -1,0 +1,107 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (request.auth.token.role == 'SUPER_ADMIN' || request.auth.token.role == 'admin');
+    }
+
+    function isAreaManager() {
+      return isAuthenticated() && request.auth.token.role == 'AREA_MANAGER';
+    }
+
+    function isSalesman() {
+      return isAuthenticated() && (request.auth.token.role == 'SALESMAN' || request.auth.token.role == 'salesman');
+    }
+
+    function isSelf(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 1. User Profiles
+    match /users/{userId} {
+      allow read: if isSuperAdmin() || isSelf(userId);
+      allow write: if isSuperAdmin();
+    }
+
+    // 2. Masters (States, Districts, Markets)
+    match /states/{stateId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+    match /districts/{districtId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+    match /markets/{marketId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    // 3. Products / SKU Master (Rule 10)
+    match /products/{skuId} {
+      allow read: if isAuthenticated();
+      allow write: if isSuperAdmin();
+    }
+
+    // 4. Outlets (Rule 1 & 2)
+    match /outlets/{outletId} {
+      allow read: if isSuperAdmin() || 
+                     (isSalesman() && (resource.data.assignedSalesmanId == request.auth.uid || request.auth.uid in resource.data.assignedSalesmanIds));
+      allow create: if isSuperAdmin() || isAreaManager();
+      allow update: if isSuperAdmin() || 
+                       (isSalesman() && 
+                        (resource.data.assignedSalesmanId == request.auth.uid || request.auth.uid in resource.data.assignedSalesmanIds) &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastVisitedAt', 'status', 'isCheckedIn', 'checkInTime']));
+      allow delete: if false; // Deletions strictly forbidden
+    }
+
+    // 5. Visits
+    match /visits/{visitId} {
+      allow read: if isSuperAdmin() || 
+                     (isSalesman() && resource.data.salesmanId == request.auth.uid);
+      allow create: if isSalesman() && request.resource.data.salesmanId == request.auth.uid;
+      allow update: if isSalesman() && resource.data.salesmanId == request.auth.uid &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checkOutTime', 'visitDurationMinutes', 'remarks', 'saleRecorded', 'collectionRecorded']);
+      allow delete: if false;
+    }
+
+    // 6. Sales Invoices: Append-only (Rule 11 & 12)
+    match /sales_invoices/{invoiceId} {
+      allow read: if isSuperAdmin() || 
+                     (isSalesman() && resource.data.salesmanId == request.auth.uid);
+      allow create: if isSalesman() && request.resource.data.salesmanId == request.auth.uid;
+      allow update: if false; // Immutable once written
+      allow delete: if false;
+    }
+
+    // 7. Collections: Append-only
+    match /collections/{collectionId} {
+      allow read: if isSuperAdmin() || 
+                     (isSalesman() && resource.data.salesmanId == request.auth.uid);
+      allow create: if isSalesman() && request.resource.data.salesmanId == request.auth.uid;
+      allow update: if isSuperAdmin(); // Only admin can update cheque status
+      allow delete: if false;
+    }
+
+    // 8. Party Ledgers: Managed strictly by transactional ledger functions
+    match /ledgers/{ledgerId} {
+      allow read: if isSuperAdmin() || 
+                     (isSalesman() && request.auth.uid == resource.data.recordedBySalesmanId);
+      allow write: if isSuperAdmin();
+    }
+
+    // 9. Audit Logs: Immutable compliance trail
+    match /audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
